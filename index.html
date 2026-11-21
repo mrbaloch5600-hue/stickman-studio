@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stickman Studio Prototype</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #09090b;
+      color: #f4f4f5;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px;
+      gap: 12px;
+    }
+    canvas {
+      width: 100%;
+      max-width: 420px;
+      aspect-ratio: 9 / 16;
+      background: radial-gradient(circle at 50% 30%, #1c1917 0%, #09090b 75%);
+      border: 1px solid #27272a;
+      border-radius: 12px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      max-width: 420px;
+    }
+    button {
+      background: #18181b;
+      color: #fafafa;
+      border: 1px solid #3f3f46;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button.accent {
+      background: #7f1d1d;
+      border-color: #991b1b;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage" width="540" height="960"></canvas>
+
+  <div class="controls">
+    <button class="accent" id="toggleWalk">Walk / Stop</button>
+    <button id="sfxWhoosh">Whoosh</button>
+    <button id="sfxStep">Footstep</button>
+    <button id="sfxBell">Bell</button>
+    <button id="sfxClock">Clock Tick</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d");
+
+    let audioCtx = null;
+    function ensureAudio() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function playWhoosh() {
+      ensureAudio();
+      const dur = 0.45;
+      const bufSize = Math.floor(audioCtx.sampleRate * dur);
+      const buffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.sin((i / bufSize) * Math.PI);
+      }
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(180, audioCtx.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(950, audioCtx.currentTime + dur * 0.5);
+      filter.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + dur);
+      filter.Q.value = 2.2;
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.01, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.45, audioCtx.currentTime + dur * 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      noise.start();
+    }
+
+    function playFootstep() {
+      ensureAudio();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(135, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(42, audioCtx.currentTime + 0.11);
+
+      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.12);
+    }
+
+    function playBell() {
+      ensureAudio();
+      const freqs = [587.33, 1174.66, 1760];
+      freqs.forEach((f, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(f, audioCtx.currentTime);
+
+        const vol = 0.22 / (idx + 1);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0008, audioCtx.currentTime + 1.4);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.45);
+      });
+    }
+
+    function playClockTick() {
+      ensureAudio();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(1400, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(500, audioCtx.currentTime + 0.03);
+
+      gain.gain.setValueAtTime(0.14, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.035);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.04);
+    }
+
+    document.getElementById("sfxWhoosh").onclick = playWhoosh;
+    document.getElementById("sfxStep").onclick = playFootstep;
+    document.getElementById("sfxBell").onclick = playBell;
+    document.getElementById("sfxClock").onclick = playClockTick;
+
+    let walking = true;
+    document.getElementById("toggleWalk").onclick = () => {
+      walking = !walking;
+      playWhoosh();
+    };
+
+    let t = 0;
+    let lastStepPhase = 0;
+
+    function drawStickman(x, y, phase) {
+      const hipY = y - 85;
+      const shoulderY = hipY - 75;
+      const headY = shoulderY - 30;
+      const bob = Math.abs(Math.sin(phase)) * 6;
+
+      ctx.save();
+      ctx.translate(x, bob);
+
+      // Subtle dark-red aura/highlight behind core
+      ctx.fillStyle = "rgba(153, 27, 27, 0.22)";
+      ctx.beginPath();
+      ctx.arc(0, shoulderY + 20, 72, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#f4f4f5";
+      ctx.lineWidth = 6;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      // Head
+      ctx.beginPath();
+      ctx.arc(0, headY, 22, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Subtle dark-red focus line on head/brow
+      ctx.strokeStyle = "#dc2626";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(4, headY - 4);
+      ctx.lineTo(15, headY - 4);
+      ctx.stroke();
+
+      // Torso
+      ctx.strokeStyle = "#f4f4f5";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(0, shoulderY);
+      ctx.lineTo(0, hipY);
+      ctx.stroke();
+
+      // Swing angles
+      const legSwing = Math.sin(phase) * 0.65;
+      const armSwing = -Math.sin(phase) * 0.55;
+
+      // Back leg
+      ctx.beginPath();
+      ctx.moveTo(0, hipY);
+      ctx.lineTo(Math.sin(-legSwing) * 80, hipY + Math.cos(-legSwing) * 80);
+      ctx.stroke();
+
+      // Front leg
+      ctx.beginPath();
+      ctx.moveTo(0, hipY);
+      ctx.lineTo(Math.sin(legSwing) * 80, hipY + Math.cos(legSwing) * 80);
+      ctx.stroke();
+
+      // Back arm
+      ctx.beginPath();
+      ctx.moveTo(0, shoulderY + 8);
+      ctx.lineTo(Math.sin(-armSwing) * 65, shoulderY + 8 + Math.cos(-armSwing) * 65);
+      ctx.stroke();
+
+      // Front arm
+      ctx.beginPath();
+      ctx.moveTo(0, shoulderY + 8);
+      ctx.lineTo(Math.sin(armSwing) * 65, shoulderY + 8 + Math.cos(armSwing) * 65);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Ground line
+      const groundY = 660;
+      ctx.strokeStyle = "#27272a";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(40, groundY);
+      ctx.lineTo(canvas.width - 40, groundY);
+      ctx.stroke();
+
+      // Dark-red horizon accent
+      ctx.strokeStyle = "#7f1d1d";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(150, groundY);
+      ctx.lineTo(390, groundY);
+      ctx.stroke();
+
+      if (walking) {
+        t += 0.065;
+        const stepNow = Math.floor(t / Math.PI);
+        if (stepNow !== lastStepPhase) {
+          lastStepPhase = stepNow;
+          playFootstep();
+        }
+      }
+
+      const xPos = 270 + Math.sin(t * 0.35) * 90;
+      drawStickman(xPos, groundY, t);
+
+      requestAnimationFrame(render);
+    }
+
+    render();
+  </script>
+</body>
+</html>
